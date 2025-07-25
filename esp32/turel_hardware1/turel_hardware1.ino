@@ -30,10 +30,10 @@ const int PAN_SERVO_PIN = 12;
 const int TILT_SERVO_PIN = 13;
 const int PAN_STOP = 90;
 const int TILT_STOP = 90;
-const int PAN_CW = 75;
-const int PAN_CCW = 105;
-const int TILT_CW = 65;
-const int TILT_CCW = 115;
+const int PAN_CW = 80;
+const int PAN_CCW = 100;
+const int TILT_CW = 80;
+const int TILT_CCW = 100;
 const float CENTER_THRESHOLD = 0.2;
 const unsigned long OBJECT_TIMEOUT = 275; // таймаут потери объекта (мс)
 
@@ -86,8 +86,8 @@ void updateServos() {
     bool objectLost = (currentTime - objectCoords.lastUpdate > OBJECT_TIMEOUT);
     
     if (objectLost) {
-        if (panServo.attached()) panServo.write(PAN_STOP);
-        if (tiltServo.attached()) tiltServo.write(TILT_STOP);
+        panServo.write(PAN_STOP);
+        tiltServo.write(TILT_STOP);
         
         if (objectLost) {
             static unsigned long lastPrint = 0;
