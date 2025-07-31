@@ -11,7 +11,8 @@ COORDS_URL = 'http://192.168.0.201/coords'
 MODEL_PATH = "yolo-Weights/yolov8n.pt"
 TARGET_CLASS = "person"
 MIN_CONFIDENCE = 0.35
-SEND_INTERVAL = 0.05  # Интервал отправки (секунды)
+SEND_INTERVAL = 0.03  # Уменьшенный интервал отправки
+OBJECT_TIMEOUT = 0.5  # Таймаут потери объекта (секунды)
 
 class ObjectTracker:
     def __init__(self):
@@ -19,6 +20,7 @@ class ObjectTracker:
         self.last_sent = 0
         self.last_frame = None
         self.class_id = self.get_class_id()
+        self.last_detection_time = 0
 
     def get_class_id(self):
         """Получаем ID класса 'person' из модели"""
@@ -46,6 +48,11 @@ class ObjectTracker:
             x1, y1, x2, y2 = map(int, best_box.xyxy[0].tolist())
             self.send_coordinates(x1, y1, x2, y2, max_conf)
             self.draw_objects(img, x1, y1, x2, y2, max_conf)
+            self.last_detection_time = time.time()
+        else:
+            # Если объект не обнаружен и прошло больше OBJECT_TIMEOUT секунд
+            if time.time() - self.last_detection_time > OBJECT_TIMEOUT:
+                self.send_stop_signal()
         
         return img
 
@@ -57,11 +64,9 @@ class ObjectTracker:
         center_x, center_y = width // 2, height // 2
         obj_x, obj_y = (x1 + x2) // 2, (y1 + y2) // 2
         
-        # Вычисляем относительные координаты (-1..1)
         rel_x = (obj_x - center_x) / center_x
-        rel_y = (center_y - obj_y) / center_y  # Инвертируем ось Y
+        rel_y = (center_y - obj_y) / center_y
         
-        # Ограничиваем значения
         rel_x = max(-1.0, min(1.0, rel_x))
         rel_y = max(-1.0, min(1.0, rel_y))
         
@@ -76,27 +81,43 @@ class ObjectTracker:
         }
         
         try:
-            resp = requests.post(COORDS_URL, json=payload, timeout=0.3)
+            resp = requests.post(COORDS_URL, json=payload, timeout=0.2)
             if resp.status_code == 200:
                 self.last_sent = time.time()
                 print(f"Sent: X={rel_x:.2f}, Y={rel_y:.2f}")
         except Exception as e:
             print(f"Send error: {e}")
 
-    def draw_objects(self, img, x1, y1, x2, y2, conf):
-        # Рисуем bounding box
-        cv2.rectangle(img, (x1, y1), (x2, y2), (0, 255, 0), 2)
+    def send_stop_signal(self):
+        """Отправляет сигнал остановки сервоприводам"""
+        if time.time() - self.last_sent < SEND_INTERVAL:
+            return
         
-        # Подпись с координатами
+        payload = {
+            "rel_x": 0.0,
+            "rel_y": 0.0,
+            "abs_x": 0,
+            "abs_y": 0,
+            "width": 0,
+            "height": 0,
+            "confidence": 0.0
+        }
+        
+        try:
+            resp = requests.post(COORDS_URL, json=payload, timeout=0.2)
+            if resp.status_code == 200:
+                self.last_sent = time.time()
+                print("Sent: STOP signal")
+        except Exception as e:
+            print(f"Send STOP error: {e}")
+
+    def draw_objects(self, img, x1, y1, x2, y2, conf):
+        cv2.rectangle(img, (x1, y1), (x2, y2), (0, 255, 0), 2)
         label = f"{TARGET_CLASS} {conf:.2f}"
         cv2.putText(img, label, (x1, y1 - 10), 
                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
-        
-        # Центр объекта
         center_x, center_y = (x1 + x2) // 2, (y1 + y2) // 2
         cv2.circle(img, (center_x, center_y), 5, (0, 0, 255), -1)
-        
-        # Линия от центра кадра
         h, w = img.shape[:2]
         cv2.line(img, (w//2, h//2), (center_x, center_y), (255, 0, 0), 2)
 
