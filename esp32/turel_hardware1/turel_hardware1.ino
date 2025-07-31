@@ -9,7 +9,6 @@ const char* WIFI_PASS = "Neutrhino1";
 
 WebServer server(80);
 
-// Структура для координат
 struct {
     float rel_x;
     float rel_y;
@@ -18,14 +17,12 @@ struct {
     int width;
     int height;
     float confidence;
-    unsigned long lastUpdate = 0; // время последнего обновления координат
+    unsigned long lastUpdate = 0;
 } objectCoords;
 
-// Сервоприводы
-Servo panServo;  // горизонтальное вращение (ось X)
-Servo tiltServo; // вертикальное вращение (ось Y)
+Servo panServo;
+Servo tiltServo;
 
-// Параметры сервоприводов
 const int PAN_SERVO_PIN = 12;
 const int TILT_SERVO_PIN = 13;
 const int PAN_STOP = 90;
@@ -35,7 +32,7 @@ const int PAN_CCW = 100;
 const int TILT_CW = 80;
 const int TILT_CCW = 100;
 const float CENTER_THRESHOLD = 0.2;
-const unsigned long OBJECT_TIMEOUT = 275; // таймаут потери объекта (мс)
+const unsigned long OBJECT_TIMEOUT = 275; // Таймаут потери объекта (мс)
 
 void serveJpg() {
     auto frame = esp32cam::capture();
@@ -71,7 +68,7 @@ void handleCoords() {
         doc["width"],
         doc["height"],
         doc["confidence"],
-        millis() // обновляем время последнего обнаружения
+        millis()
     };
 
     Serial.printf("Обнаружен объект: X=%.2f Y=%.2f Conf=%.2f\n", 
@@ -81,20 +78,15 @@ void handleCoords() {
 
 void updateServos() {
     unsigned long currentTime = millis();
-    
-    // Проверка таймаута объекта
-    bool objectLost = (currentTime - objectCoords.lastUpdate > OBJECT_TIMEOUT);
+    bool objectLost = (currentTime - objectCoords.lastUpdate > OBJECT_TIMEOUT) || (objectCoords.confidence < 0.1);
     
     if (objectLost) {
         panServo.write(PAN_STOP);
         tiltServo.write(TILT_STOP);
-        
-        if (objectLost) {
-            static unsigned long lastPrint = 0;
-            if (currentTime - lastPrint > 1000) {
-                Serial.println("Объект потерян, сервоприводы остановлены");
-                lastPrint = currentTime;
-            }
+        static unsigned long lastPrint = 0;
+        if (currentTime - lastPrint > 1000) {
+            Serial.println("Объект потерян, сервоприводы остановлены");
+            lastPrint = currentTime;
         }
         return;
     }
@@ -102,7 +94,6 @@ void updateServos() {
     float xError = objectCoords.rel_x;
     float yError = objectCoords.rel_y;
 
-    // Плавное управление сервоприводами с защитой от резких движений
     static int lastPanAction = PAN_STOP;
     static int lastTiltAction = TILT_STOP;
     
@@ -151,14 +142,12 @@ void setup() {
         Serial.println(ok ? "CAMERA OK" : "CAMERA FAIL");
     }
 
-    // Инициализация сервоприводов
     panServo.attach(PAN_SERVO_PIN);
     tiltServo.attach(TILT_SERVO_PIN);
     panServo.write(PAN_STOP);
     tiltServo.write(TILT_STOP);
     Serial.println("Сервоприводы инициализированы в положение STOP");
 
-    // Подключение к WiFi
     WiFi.persistent(false);
     WiFi.mode(WIFI_STA);
     WiFi.begin(WIFI_SSID, WIFI_PASS);
@@ -169,7 +158,6 @@ void setup() {
     
     Serial.printf("\nWiFi Connected\nIP: %s\n", WiFi.localIP().toString().c_str());
     
-    // Роуты
     server.on("/cam-hi.jpg", serveJpg);
     server.on("/coords", HTTP_POST, handleCoords);
     server.begin();
@@ -177,7 +165,5 @@ void setup() {
 
 void loop() {
     server.handleClient();
-    if (objectCoords.confidence > 0.4) { // если объект обнаружен
-        updateServos();
-    }
+    updateServos(); // Всегда вызываем, чтобы обрабатывать остановку при потере объекта
 }
