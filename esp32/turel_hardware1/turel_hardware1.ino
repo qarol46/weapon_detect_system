@@ -16,6 +16,7 @@ struct {
     float rel_x;
     float rel_y;
     float confidence;
+    bool button_state;  // Добавлено состояние кнопки
     unsigned long lastUpdate;
     SemaphoreHandle_t mutex;
 } sharedData;
@@ -23,6 +24,7 @@ struct {
 // Сервоприводы
 Servo panServo;
 Servo tiltServo;
+const int LOCK_PIN = 14;  // Пин для управления блокировкой
 
 // Параметры сервоприводов
 const int PAN_SERVO_PIN = 12;
@@ -31,19 +33,20 @@ const int PAN_STOP = 90;
 const int TILT_STOP = 90;
 const int PAN_CW = 84;
 const int PAN_CCW = 100;
-const int TILT_CW = 80;
-const int TILT_CCW = 100;
+const int TILT_CW = 75;
+const int TILT_CCW = 105;
 const float CENTER_THRESHOLD = 0.2;
 const unsigned long OBJECT_TIMEOUT = 275;
 
-// Функция для потока сервоприводов
 void servoTask(void *pvParameters) {
     while(1) {
-        // Блокируем мьютекс для чтения общих данных
         if(xSemaphoreTake(sharedData.mutex, portMAX_DELAY) == pdTRUE) {
             unsigned long currentTime = millis();
             bool objectLost = (currentTime - sharedData.lastUpdate > OBJECT_TIMEOUT) || 
                              (sharedData.confidence < 0.1);
+            
+            // Управление блокировкой
+            digitalWrite(LOCK_PIN, sharedData.button_state ? HIGH : LOW);
             
             if(objectLost) {
                 panServo.write(PAN_STOP);
@@ -52,14 +55,12 @@ void servoTask(void *pvParameters) {
                 float xError = sharedData.rel_x;
                 float yError = sharedData.rel_y;
                 
-                // Горизонтальное управление
                 if(fabs(xError) > CENTER_THRESHOLD) {
                     panServo.write((xError > 0) ? PAN_CW : PAN_CCW);
                 } else {
                     panServo.write(PAN_STOP);
                 }
                 
-                // Вертикальное управление
                 if(fabs(yError) > CENTER_THRESHOLD) {
                     tiltServo.write((yError > 0) ? TILT_CCW : TILT_CW);
                 } else {
@@ -68,7 +69,7 @@ void servoTask(void *pvParameters) {
             }
             xSemaphoreGive(sharedData.mutex);
         }
-        vTaskDelay(10 / portTICK_PERIOD_MS); // 10ms задержка
+        vTaskDelay(10 / portTICK_PERIOD_MS);
     }
 }
 
@@ -98,20 +99,20 @@ void handleCoords() {
         return;
     }
 
-    // Блокируем мьютекс для записи общих данных
     if(xSemaphoreTake(sharedData.mutex, portMAX_DELAY) == pdTRUE) {
         sharedData.rel_x = doc["rel_x"];
         sharedData.rel_y = doc["rel_y"];
         sharedData.confidence = doc["confidence"];
+        sharedData.button_state = doc["button_state"];  // Получаем состояние кнопки
         sharedData.lastUpdate = millis();
         xSemaphoreGive(sharedData.mutex);
     }
 
-    // Формируем эхо-ответ
-    char echo_response[128];
+    // Формируем эхо-ответ с состоянием кнопки
+    char echo_response[150];
     snprintf(echo_response, sizeof(echo_response), 
-             "{\"echo\": {\"rel_x\": %.2f, \"rel_y\": %.2f, \"confidence\": %.2f}}", 
-             sharedData.rel_x, sharedData.rel_y, sharedData.confidence);
+             "{\"echo\": {\"rel_x\": %.2f, \"rel_y\": %.2f, \"confidence\": %.2f, \"button_state\": %d}}", 
+             sharedData.rel_x, sharedData.rel_y, sharedData.confidence, sharedData.button_state);
     
     server.send(200, "application/json", echo_response);
 }
@@ -135,12 +136,14 @@ void setup() {
         Serial.println(ok ? "CAMERA OK" : "CAMERA FAIL");
     }
 
-    // Инициализация сервоприводов
+    // Инициализация сервоприводов и пина блокировки
     panServo.attach(PAN_SERVO_PIN);
     tiltServo.attach(TILT_SERVO_PIN);
+    pinMode(LOCK_PIN, OUTPUT);
+    digitalWrite(LOCK_PIN, LOW);
     panServo.write(PAN_STOP);
     tiltServo.write(TILT_STOP);
-    Serial.println("Сервоприводы инициализированы");
+    Serial.println("Сервоприводы и блокировка инициализированы");
 
     // Подключение к WiFi
     WiFi.persistent(false);
@@ -159,13 +162,13 @@ void setup() {
 
     // Создаем отдельный поток для сервоприводов
     xTaskCreatePinnedToCore(
-        servoTask,    // Функция задачи
-        "ServoTask", // Имя задачи
-        4096,        // Размер стека
-        NULL,        // Параметры
-        1,           // Приоритет
-        NULL,        // Дескриптор задачи
-        0            // Ядро (0 или 1)
+        servoTask,
+        "ServoTask",
+        4096,
+        NULL,
+        1,
+        NULL,
+        0
     );
 
     Serial.println("Система запущена. Поток сервоприводов активен.");
@@ -173,6 +176,5 @@ void setup() {
 
 void loop() {
     server.handleClient();
-    // Основной цикл теперь занимается только веб-сервером
     delay(1);
 }
