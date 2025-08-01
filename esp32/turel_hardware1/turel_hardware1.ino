@@ -7,20 +7,20 @@
 #include <freertos/task.h>
 #include <ESP32MX1508.h>
 
-#define PINA 9
-#define PINB 10
+#define PINA 2
+#define PINB 15
 
 const char* WIFI_SSID = "Engi-Teams_2.4G";
 const char* WIFI_PASS = "Neutrhino1";
 
 WebServer server(80);
 
-// Структура для безопасного обмена данными между потоками
+// Структура для обмена данными между потоками
 struct {
     float rel_x;
     float rel_y;
     float confidence;
-    bool button_state;  // Добавлено состояние кнопки
+    bool button_state;
     unsigned long lastUpdate;
     SemaphoreHandle_t mutex;
 } sharedData;
@@ -28,14 +28,14 @@ struct {
 // Сервоприводы
 Servo panServo;
 Servo tiltServo;
-const int LOCK_PIN = 14;  // Пин для управления блокировкой
+const int LOCK_PIN = 14;
 
 // Мотор
 MX1508 motorA(PINA, PINB);
 
 // Параметры сервоприводов
 const int PAN_SERVO_PIN = 12;
-const int TILT_SERVO_PIN = 15;
+const int TILT_SERVO_PIN = 13;
 const int PAN_STOP = 90;
 const int TILT_STOP = 90;
 const int PAN_CW = 84;
@@ -45,61 +45,79 @@ const int TILT_CCW = 115;
 const float CENTER_THRESHOLD = 0.2;
 const unsigned long OBJECT_TIMEOUT = 275;
 
-// Флаг для однократного срабатывания мотора
+// Параметры плавности
+const float SERVO_SMOOTHING_FACTOR = 0.15;  // Коэффициент плавности (0.1-0.3)
+const int SERVO_UPDATE_INTERVAL = 20;       // Интервал обновления (мс)
+const int MOTOR_RUN_TIME = 800;             // Время работы мотора (мс)
+const int MOTOR_COOLDOWN = 5000;            // Время остывания мотора (мс)
+
+// Текущие положения
+float currentPanPos = PAN_STOP;
+float currentTiltPos = TILT_STOP;
 bool motorTriggered = false;
 
 void motorControlTask(void *pvParameters) {
     while(1) {
         if(xSemaphoreTake(sharedData.mutex, portMAX_DELAY) == pdTRUE) {
-            if(sharedData.button_state == 1 && !motorTriggered) {
-                // Запускаем мотор только если button_state == 0 и мотор еще не был запущен
-                motorA.motorGo(255);  // Вращаем мотор на полную скорость
-                delay(800);           // Ждем 800 мс
-                motorA.motorStop();   // Останавливаем мотор
-                delay(5000);
-                motorTriggered = true; // Устанавливаем флаг, что мотор был запущен
-            } else if(sharedData.button_state == 0) {
-                // Если button_state снова стал 1, сбрасываем флаг
+            if(sharedData.button_state && !motorTriggered) {
+                motorA.motorGo(255);
+                delay(MOTOR_RUN_TIME);
+                motorA.motorStop();
+                delay(MOTOR_COOLDOWN);
+                motorTriggered = true;
+            } 
+            else if(!sharedData.button_state) {
                 motorTriggered = false;
             }
             xSemaphoreGive(sharedData.mutex);
         }
-        vTaskDelay(100 / portTICK_PERIOD_MS); // Проверяем состояние каждые 100 мс
+        vTaskDelay(100 / portTICK_PERIOD_MS);
     }
 }
 
+void smoothServoMove(Servo &servo, float &currentPos, int targetPos) {
+    // Плавное изменение положения
+    float delta = targetPos - currentPos;
+    currentPos += delta * SERVO_SMOOTHING_FACTOR;
+    servo.write(round(currentPos));
+}
+
 void servoTask(void *pvParameters) {
+    TickType_t xLastWakeTime = xTaskGetTickCount();
+    
     while(1) {
         if(xSemaphoreTake(sharedData.mutex, portMAX_DELAY) == pdTRUE) {
             unsigned long currentTime = millis();
             bool objectLost = (currentTime - sharedData.lastUpdate > OBJECT_TIMEOUT) || 
-                             (sharedData.confidence < 0.1);
+                            (sharedData.confidence < 0.1);
             
-            // Управление блокировкой
             digitalWrite(LOCK_PIN, sharedData.button_state ? HIGH : LOW);
             
             if(objectLost) {
-                panServo.write(PAN_STOP);
-                tiltServo.write(TILT_STOP);
-            } else {
+                smoothServoMove(panServo, currentPanPos, PAN_STOP);
+                smoothServoMove(tiltServo, currentTiltPos, TILT_STOP);
+            } 
+            else {
                 float xError = sharedData.rel_x;
                 float yError = sharedData.rel_y;
                 
+                int targetPan = PAN_STOP;
+                int targetTilt = TILT_STOP;
+                
                 if(fabs(xError) > CENTER_THRESHOLD) {
-                    panServo.write((xError > 0) ? PAN_CW : PAN_CCW);
-                } else {
-                    panServo.write(PAN_STOP);
+                    targetPan = (xError > 0) ? PAN_CW : PAN_CCW;
                 }
                 
                 if(fabs(yError) > CENTER_THRESHOLD) {
-                    tiltServo.write((yError > 0) ? TILT_CCW : TILT_CW);
-                } else {
-                    tiltServo.write(TILT_STOP);
+                    targetTilt = (yError > 0) ? TILT_CCW : TILT_CW;
                 }
+                
+                smoothServoMove(panServo, currentPanPos, targetPan);
+                smoothServoMove(tiltServo, currentTiltPos, targetTilt);
             }
             xSemaphoreGive(sharedData.mutex);
         }
-        vTaskDelay(10 / portTICK_PERIOD_MS);
+        vTaskDelayUntil(&xLastWakeTime, pdMS_TO_TICKS(SERVO_UPDATE_INTERVAL));
     }
 }
 
@@ -140,8 +158,8 @@ void handleCoords() {
 
     char echo_response[150];
     snprintf(echo_response, sizeof(echo_response), 
-             "{\"echo\": {\"rel_x\": %.2f, \"rel_y\": %.2f, \"confidence\": %.2f, \"button_state\": %d}}", 
-             sharedData.rel_x, sharedData.rel_y, sharedData.confidence, sharedData.button_state);
+            "{\"echo\": {\"rel_x\": %.2f, \"rel_y\": %.2f, \"confidence\": %.2f, \"button_state\": %d}}", 
+            sharedData.rel_x, sharedData.rel_y, sharedData.confidence, sharedData.button_state);
     
     server.send(200, "application/json", echo_response);
 }
@@ -165,14 +183,15 @@ void setup() {
         Serial.println(ok ? "CAMERA OK" : "CAMERA FAIL");
     }
 
-    // Инициализация сервоприводов и пина блокировки
+    // Инициализация сервоприводов
     panServo.attach(PAN_SERVO_PIN);
     tiltServo.attach(TILT_SERVO_PIN);
     pinMode(LOCK_PIN, OUTPUT);
     digitalWrite(LOCK_PIN, LOW);
+    currentPanPos = PAN_STOP;
+    currentTiltPos = TILT_STOP;
     panServo.write(PAN_STOP);
     tiltServo.write(TILT_STOP);
-    Serial.println("Сервоприводы и блокировка инициализированы");
 
     // Подключение к WiFi
     WiFi.persistent(false);
@@ -190,27 +209,10 @@ void setup() {
     server.begin();
 
     // Создаем потоки
-    xTaskCreatePinnedToCore(
-        servoTask,
-        "ServoTask",
-        4096,
-        NULL,
-        1,
-        NULL,
-        0
-    );
+    xTaskCreatePinnedToCore(servoTask, "ServoTask", 4096, NULL, 1, NULL, 0);
+    xTaskCreatePinnedToCore(motorControlTask, "MotorControlTask", 4096, NULL, 1, NULL, 0);
 
-    xTaskCreatePinnedToCore(
-        motorControlTask,
-        "MotorControlTask",
-        4096,
-        NULL,
-        1,
-        NULL,
-        0
-    );
-
-    Serial.println("Система запущена. Потоки сервоприводов и мотора активны.");
+    Serial.println("Система запущена. Потоки активны.");
 }
 
 void loop() {
