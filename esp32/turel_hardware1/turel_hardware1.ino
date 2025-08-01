@@ -5,6 +5,10 @@
 #include <ESP32Servo.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
+#include <ESP32MX1508.h>
+
+#define PINA 9
+#define PINB 10
 
 const char* WIFI_SSID = "Engi-Teams_2.4G";
 const char* WIFI_PASS = "Neutrhino1";
@@ -26,6 +30,9 @@ Servo panServo;
 Servo tiltServo;
 const int LOCK_PIN = 14;  // Пин для управления блокировкой
 
+// Мотор
+MX1508 motorA(PINA, PINB);
+
 // Параметры сервоприводов
 const int PAN_SERVO_PIN = 12;
 const int TILT_SERVO_PIN = 15;
@@ -37,6 +44,29 @@ const int TILT_CW = 75;
 const int TILT_CCW = 115;
 const float CENTER_THRESHOLD = 0.2;
 const unsigned long OBJECT_TIMEOUT = 275;
+
+// Флаг для однократного срабатывания мотора
+bool motorTriggered = false;
+
+void motorControlTask(void *pvParameters) {
+    while(1) {
+        if(xSemaphoreTake(sharedData.mutex, portMAX_DELAY) == pdTRUE) {
+            if(sharedData.button_state == 1 && !motorTriggered) {
+                // Запускаем мотор только если button_state == 0 и мотор еще не был запущен
+                motorA.motorGo(255);  // Вращаем мотор на полную скорость
+                delay(800);           // Ждем 800 мс
+                motorA.motorStop();   // Останавливаем мотор
+                delay(5000);
+                motorTriggered = true; // Устанавливаем флаг, что мотор был запущен
+            } else if(sharedData.button_state == 0) {
+                // Если button_state снова стал 1, сбрасываем флаг
+                motorTriggered = false;
+            }
+            xSemaphoreGive(sharedData.mutex);
+        }
+        vTaskDelay(100 / portTICK_PERIOD_MS); // Проверяем состояние каждые 100 мс
+    }
+}
 
 void servoTask(void *pvParameters) {
     while(1) {
@@ -103,12 +133,11 @@ void handleCoords() {
         sharedData.rel_x = doc["rel_x"];
         sharedData.rel_y = doc["rel_y"];
         sharedData.confidence = doc["confidence"];
-        sharedData.button_state = doc["button_state"];  // Получаем состояние кнопки
+        sharedData.button_state = doc["button_state"];
         sharedData.lastUpdate = millis();
         xSemaphoreGive(sharedData.mutex);
     }
 
-    // Формируем эхо-ответ с состоянием кнопки
     char echo_response[150];
     snprintf(echo_response, sizeof(echo_response), 
              "{\"echo\": {\"rel_x\": %.2f, \"rel_y\": %.2f, \"confidence\": %.2f, \"button_state\": %d}}", 
@@ -160,7 +189,7 @@ void setup() {
     server.on("/coords", HTTP_POST, handleCoords);
     server.begin();
 
-    // Создаем отдельный поток для сервоприводов
+    // Создаем потоки
     xTaskCreatePinnedToCore(
         servoTask,
         "ServoTask",
@@ -171,7 +200,17 @@ void setup() {
         0
     );
 
-    Serial.println("Система запущена. Поток сервоприводов активен.");
+    xTaskCreatePinnedToCore(
+        motorControlTask,
+        "MotorControlTask",
+        4096,
+        NULL,
+        1,
+        NULL,
+        0
+    );
+
+    Serial.println("Система запущена. Потоки сервоприводов и мотора активны.");
 }
 
 void loop() {
