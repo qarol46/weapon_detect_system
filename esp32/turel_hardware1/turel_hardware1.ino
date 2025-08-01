@@ -28,13 +28,13 @@ const int LOCK_PIN = 14;  // Пин для управления блокиров
 
 // Параметры сервоприводов
 const int PAN_SERVO_PIN = 12;
-const int TILT_SERVO_PIN = 13;
+const int TILT_SERVO_PIN = 15;
 const int PAN_STOP = 90;
 const int TILT_STOP = 90;
 const int PAN_CW = 84;
-const int PAN_CCW = 100;
+const int PAN_CCW = 98;
 const int TILT_CW = 75;
-const int TILT_CCW = 105;
+const int TILT_CCW = 115;
 const float CENTER_THRESHOLD = 0.2;
 const unsigned long OBJECT_TIMEOUT = 275;
 

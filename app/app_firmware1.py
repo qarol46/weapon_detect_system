@@ -22,8 +22,8 @@ class ObjectTracker:
         self.class_id = self.get_class_id()
         self.last_detection_time = 0
         self.communication_errors = 0
-        self.button_state = False  # Состояние кнопки (False - не нажата)
-        self.button_rect = (20, 20, 200, 50)  # Позиция и размер кнопки (x,y,w,h)
+        self.button_state = False
+        self.button_rect = (20, 20, 200, 50)
 
     def get_class_id(self):
         if hasattr(self.model, 'names'):
@@ -33,10 +33,12 @@ class ObjectTracker:
         return 0
 
     def process_frame(self, img):
-        self.last_frame = img
-        self.draw_interface(img)  # Отрисовываем интерфейс с кнопкой
+        # Поворачиваем изображение на 180 градусов
+        rotated_img = cv2.rotate(img, cv2.ROTATE_180)
+        self.last_frame = rotated_img
+        self.draw_interface(rotated_img)
         
-        results = self.model.predict(img, verbose=False)
+        results = self.model.predict(rotated_img, verbose=False)
         best_box = None
         max_conf = 0.0
         
@@ -51,17 +53,15 @@ class ObjectTracker:
         if best_box is not None:
             x1, y1, x2, y2 = map(int, best_box.xyxy[0].tolist())
             self.send_data(x1, y1, x2, y2, max_conf)
-            self.draw_objects(img, x1, y1, x2, y2, max_conf)
+            self.draw_objects(rotated_img, x1, y1, x2, y2, max_conf)
             self.last_detection_time = time.time()
         else:
             if time.time() - self.last_detection_time > OBJECT_TIMEOUT:
                 self.send_data(0, 0, 0, 0, 0.0)
         
-        return img
+        return rotated_img
 
     def draw_interface(self, img):
-        """Отрисовка кнопки и интерфейса"""
-        # Рисуем кнопку
         button_color = (0, 255, 0) if self.button_state else (0, 0, 255)
         cv2.rectangle(img, 
                      (self.button_rect[0], self.button_rect[1]),
@@ -73,10 +73,9 @@ class ObjectTracker:
                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
 
     def handle_click(self, x, y):
-        """Обработка клика мыши по кнопке"""
         bx, by, bw, bh = self.button_rect
         if bx <= x <= bx + bw and by <= y <= by + bh:
-            self.button_state = not self.button_state  # Переключаем состояние
+            self.button_state = not self.button_state
             print(f"Button state changed to: {self.button_state}")
             return True
         return False
@@ -103,7 +102,7 @@ class ObjectTracker:
             "width": x2 - x1,
             "height": y2 - y1,
             "confidence": float(conf),
-            "button_state": int(self.button_state)  # Добавляем состояние кнопки (0 или 1)
+            "button_state": int(self.button_state)
         }
         
         try:
@@ -140,7 +139,6 @@ class ObjectTracker:
         cv2.line(img, (w//2, h//2), (center_x, center_y), (255, 0, 0), 2)
 
 def mouse_callback(event, x, y, flags, param):
-    """Обработчик событий мыши"""
     if event == cv2.EVENT_LBUTTONDOWN:
         tracker.handle_click(x, y)
 
