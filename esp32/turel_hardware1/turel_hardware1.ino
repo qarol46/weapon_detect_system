@@ -7,7 +7,7 @@
 #include <freertos/task.h>
 #include <ESP32MX1508.h>
 
-#define PINA 2
+#define PINA 14
 #define PINB 15
 
 const char* WIFI_SSID = "Engi-Teams_2.4G";
@@ -28,7 +28,6 @@ struct {
 // Сервоприводы
 Servo panServo;
 Servo tiltServo;
-const int LOCK_PIN = 14;
 
 // Мотор
 MX1508 motorA(PINA, PINB);
@@ -90,8 +89,6 @@ void servoTask(void *pvParameters) {
             unsigned long currentTime = millis();
             bool objectLost = (currentTime - sharedData.lastUpdate > OBJECT_TIMEOUT) || 
                             (sharedData.confidence < 0.1);
-            
-            digitalWrite(LOCK_PIN, sharedData.button_state ? HIGH : LOW);
             
             if(objectLost) {
                 smoothServoMove(panServo, currentPanPos, PAN_STOP);
@@ -186,8 +183,6 @@ void setup() {
     // Инициализация сервоприводов
     panServo.attach(PAN_SERVO_PIN);
     tiltServo.attach(TILT_SERVO_PIN);
-    pinMode(LOCK_PIN, OUTPUT);
-    digitalWrite(LOCK_PIN, LOW);
     currentPanPos = PAN_STOP;
     currentTiltPos = TILT_STOP;
     panServo.write(PAN_STOP);

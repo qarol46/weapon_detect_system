@@ -7,8 +7,8 @@ MX1508::MX1508(uint8_t pinIN1, uint8_t pinIN2) {
     pinMode(_pinIN1, OUTPUT);
     pinMode(_pinIN2, OUTPUT);
 
-    // Устанавливаем разрешение ШИМ для каждого пина (ESP32 Core 3.2.1+)
-    analogWriteResolution(_pinIN1, 8);  // 8 бит (0-255)
+    // пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅ пїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅ (ESP32 Core 3.2.1+)
+    analogWriteResolution(_pinIN1, 8);  // 8 пїЅпїЅпїЅ (0-255)
     analogWriteResolution(_pinIN2, 8);
 }
 
