@@ -11,6 +11,7 @@ public:
     void motorGo(uint32_t pwmSpeed);
     void motorRev(uint32_t pwmSpeed);
 
+
 private:
     uint8_t _pinIN1, _pinIN2;
     uint32_t _maxpwm = 255;

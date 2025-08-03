@@ -32,37 +32,45 @@ Servo tiltServo;
 // Мотор
 MX1508 motorA(PINA, PINB);
 
+
 // Параметры сервоприводов
 const int PAN_SERVO_PIN = 12;
 const int TILT_SERVO_PIN = 13;
 const int PAN_STOP = 90;
 const int TILT_STOP = 90;
 const int PAN_CW = 84;
-const int PAN_CCW = 98;
-const int TILT_CW = 75;
-const int TILT_CCW = 115;
-const float CENTER_THRESHOLD = 0.2;
+const int PAN_CCW = 120;
+const int TILT_CW = 50;
+const int TILT_CCW = 135;
+const float CENTER_THRESHOLD = 0.25;
 const unsigned long OBJECT_TIMEOUT = 275;
 
 // Параметры плавности
-const float SERVO_SMOOTHING_FACTOR = 0.15;  // Коэффициент плавности (0.1-0.3)
-const int SERVO_UPDATE_INTERVAL = 20;       // Интервал обновления (мс)
-const int MOTOR_RUN_TIME = 800;             // Время работы мотора (мс)
-const int MOTOR_COOLDOWN = 5000;            // Время остывания мотора (мс)
+const float SERVO_SMOOTHING_FACTOR = 0.1;  // Коэффициент плавности (0.1-0.3)
+const int SERVO_UPDATE_INTERVAL = 20;      // Интервал обновления (мс)
+const int MOTOR_RUN_TIME = 800;            // Время работы мотора (мс)
+const int MOTOR_COOLDOWN = 5000;           // Время остывания мотора (мс)
+const int SERVO_MOVE_TIME = 150;           // Максимальное время движения серв за один цикл (мс)
 
 // Текущие положения
 float currentPanPos = PAN_STOP;
 float currentTiltPos = TILT_STOP;
 bool motorTriggered = false;
+unsigned long lastServoMoveTime = 0;
+bool servoWasMoving = false;
 
 void motorControlTask(void *pvParameters) {
     while(1) {
         if(xSemaphoreTake(sharedData.mutex, portMAX_DELAY) == pdTRUE) {
             if(sharedData.button_state && !motorTriggered) {
+                motorA.motorGo(255);            // Pass the speed to the motor: 0-255 for 8 bit resolution
+                delay(500);
+                servoWrite(180);
                 motorA.motorGo(255);
-                delay(MOTOR_RUN_TIME);
-                motorA.motorStop();
-                delay(MOTOR_COOLDOWN);
+                delay(1100);
+                motorA.motorStop();             // Soft Stop    -no argument
+                delay(5000);
+                servoWrite(0);
                 motorTriggered = true;
             } 
             else if(!sharedData.button_state) {
@@ -75,10 +83,14 @@ void motorControlTask(void *pvParameters) {
 }
 
 void smoothServoMove(Servo &servo, float &currentPos, int targetPos) {
-    // Плавное изменение положения
-    float delta = targetPos - currentPos;
-    currentPos += delta * SERVO_SMOOTHING_FACTOR;
-    servo.write(round(currentPos));
+    // Плавное изменение положения с ограничением времени
+    unsigned long startTime = millis();
+    while(millis() - startTime < SERVO_MOVE_TIME) {
+        float delta = targetPos - currentPos;
+        currentPos += delta * SERVO_SMOOTHING_FACTOR;
+        servo.write(round(currentPos));
+        delay(SERVO_UPDATE_INTERVAL);
+    }
 }
 
 void servoTask(void *pvParameters) {
@@ -90,9 +102,13 @@ void servoTask(void *pvParameters) {
             bool objectLost = (currentTime - sharedData.lastUpdate > OBJECT_TIMEOUT) || 
                             (sharedData.confidence < 0.1);
             
-            if(objectLost) {
-                smoothServoMove(panServo, currentPanPos, PAN_STOP);
-                smoothServoMove(tiltServo, currentTiltPos, TILT_STOP);
+            if(objectLost || servoWasMoving) {
+                // Если объект потерян или сервы уже двигались в предыдущем цикле - останавливаем
+                currentPanPos = PAN_STOP;
+                currentTiltPos = TILT_STOP;
+                panServo.write(PAN_STOP);
+                tiltServo.write(TILT_STOP);
+                servoWasMoving = false;
             } 
             else {
                 float xError = sharedData.rel_x;
@@ -109,13 +125,24 @@ void servoTask(void *pvParameters) {
                     targetTilt = (yError > 0) ? TILT_CCW : TILT_CW;
                 }
                 
-                smoothServoMove(panServo, currentPanPos, targetPan);
-                smoothServoMove(tiltServo, currentTiltPos, targetTilt);
+                if(targetPan != PAN_STOP || targetTilt != TILT_STOP) {
+                    smoothServoMove(panServo, currentPanPos, targetPan);
+                    smoothServoMove(tiltServo, currentTiltPos, targetTilt);
+                    servoWasMoving = true;
+                }
             }
             xSemaphoreGive(sharedData.mutex);
         }
         vTaskDelayUntil(&xLastWakeTime, pdMS_TO_TICKS(SERVO_UPDATE_INTERVAL));
     }
+}
+
+void servoWrite(int angle) {
+  int pulseWidth = map(angle, 0, 180, 1000, 2000);  // 1-2 мс
+  digitalWrite(2, HIGH);
+  delayMicroseconds(pulseWidth);
+  digitalWrite(2, LOW);
+  delayMicroseconds(20000 - pulseWidth);  // Общий период 20 мс
 }
 
 void serveJpg() {
@@ -163,7 +190,10 @@ void handleCoords() {
 
 void setup() {
     Serial.begin(115200);
-    
+
+    pinMode(2, OUTPUT);
+    analogWriteResolution(2, 8);
+    servoWrite(0);
     // Инициализация мьютекса
     sharedData.mutex = xSemaphoreCreateMutex();
     

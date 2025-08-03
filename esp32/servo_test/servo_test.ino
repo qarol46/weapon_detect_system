@@ -19,7 +19,7 @@ void loop() {
   
   // Вращение по часовой (меньше 90)
   Serial.println("Вращение по часовой (45)");
-  continuousServo.write(60);
+  continuousServo.write(50);
   delay(2000);
   
   // Остановка

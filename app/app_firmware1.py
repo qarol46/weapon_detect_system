@@ -89,7 +89,7 @@ class ObjectTracker:
         obj_x, obj_y = (x1 + x2) // 2, (y1 + y2) // 2
         
         rel_x = (obj_x - center_x) / center_x if x1 != 0 else 0.0
-        rel_y = (center_y - obj_y) / center_y if y1 != 0 else 0.0
+        rel_y = 0.0 #(center_y - obj_y) / center_y if y1 != 0 else 0.0 
         
         rel_x = max(-1.0, min(1.0, rel_x))
         rel_y = max(-1.0, min(1.0, rel_y))
